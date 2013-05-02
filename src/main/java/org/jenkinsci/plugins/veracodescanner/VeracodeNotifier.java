@@ -55,22 +55,18 @@ public class VeracodeNotifier extends Notifier {
 
 	private final String includes;
 	private final String applicationName;
-	private final String applicationPlatform;
 	private final String veracodeScannerFile = "veracode_scanner.tmp";
 	private final int scanFrequency;
 	private final int prescanTimeout;
 	private final BuildTriggers triggers;
 
 	@DataBoundConstructor
-	public VeracodeNotifier(String includes, String applicationName, String applicationPlatform, String scanFrequency, String prescanTimeout,
+	public VeracodeNotifier(String includes, String applicationName, int scanFrequency, int prescanTimeout,
 			BuildTriggers triggers) {
 		this.includes = includes;
 		this.applicationName = applicationName;
-		this.applicationPlatform = applicationPlatform;
-		// convert day frequency to int
-		this.scanFrequency = Integer.valueOf(scanFrequency).intValue();
-		// convert timeout freqeuency to int
-		this.prescanTimeout = Integer.valueOf(prescanTimeout).intValue();
+		this.scanFrequency = scanFrequency;
+		this.prescanTimeout = prescanTimeout;
 
 		this.triggers = triggers;
 	}
@@ -116,10 +112,6 @@ public class VeracodeNotifier extends Notifier {
 
 	public String getApplicationName() {
 		return applicationName;
-	}
-
-	public String getApplicationPlatform() {
-		return applicationPlatform;
 	}
 
 	public String getScanFrequency() {

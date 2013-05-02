@@ -5,12 +5,6 @@
     <f:entry title="Veracode Application Name" field="applicationName">
         <f:textbox/>
     </f:entry>
-    <f:entry title="Application Platform" field="applicationPlatform">
-	    <select name="applicationPlatform">
-	        <option value="Java">Java</option>
-	        <option value="Windows">Windows</option>
-	    </select>
-    </f:entry>
     <f:advanced>
     	<f:entry title="Scan Frequency (days)" field="scanFrequency">
         	<f:textbox default="${descriptor.defaultScanFrequency}"/>

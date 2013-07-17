@@ -43,6 +43,8 @@ import org.jenkinsci.plugins.veracodescanner.exception.VeracodeScannerException;
 import org.jenkinsci.plugins.veracodescanner.model.AppType;
 import org.jenkinsci.plugins.veracodescanner.model.Applist;
 import org.jenkinsci.plugins.veracodescanner.model.BuildTriggers;
+import org.jenkinsci.plugins.veracodescanner.model.buildinfo.AnalysisUnitType;
+import org.jenkinsci.plugins.veracodescanner.model.buildinfo.Buildinfo;
 import org.jenkinsci.plugins.veracodescanner.model.prescan.ModuleType;
 import org.jenkinsci.plugins.veracodescanner.model.prescan.Prescanresults;
 import org.kohsuke.stapler.DataBoundConstructor;
@@ -55,14 +57,12 @@ public class VeracodeNotifier extends Notifier {
 
 	private final String includes;
 	private final String applicationName;
-	private final String veracodeScannerFile = "veracode_scanner.tmp";
 	private final int scanFrequency;
 	private final int prescanTimeout;
 	private final BuildTriggers triggers;
 
 	@DataBoundConstructor
-	public VeracodeNotifier(String includes, String applicationName, int scanFrequency, int prescanTimeout,
-			BuildTriggers triggers) {
+	public VeracodeNotifier(String includes, String applicationName, int scanFrequency, int prescanTimeout, BuildTriggers triggers) {
 		this.includes = includes;
 		this.applicationName = applicationName;
 		this.scanFrequency = scanFrequency;
@@ -87,7 +87,6 @@ public class VeracodeNotifier extends Notifier {
 				performScan(build, listener);
 			} else {
 				List<Cause> causes = build.getCauses();
-
 				for (Cause cause : causes) {
 					if (triggers.isTriggeredBy(cause.getClass())) {
 						performScan(build, listener);
@@ -138,16 +137,15 @@ public class VeracodeNotifier extends Notifier {
 		try {
 			FilePath workspace = build.getWorkspace();
 
-			if (isScanNeeded(workspace)) {
-				FilePath[] filesToScan = workspace.list(includes);
-				listener.getLogger().println("Uploading Files to Veracode: " + Arrays.toString(filesToScan));
-				listener.getLogger().println("Veracode User: " + getDescriptor().getVeracodeUser());
+			UploadAPIWrapper veracodeUploadClient = new UploadAPIWrapper();
+			veracodeUploadClient.setUpCredentials(getDescriptor().getVeracodeUser(), getDescriptor().getVeracodePass());
 
-				UploadAPIWrapper veracodeUploadClient = new UploadAPIWrapper();
-				veracodeUploadClient.setUpCredentials(getDescriptor().getVeracodeUser(), getDescriptor().getVeracodePass());
-
-				String appId = getAppId(veracodeUploadClient, applicationName, listener);
-				if (appId != null) {
+			String appId = getAppId(veracodeUploadClient, applicationName, listener);
+			if (appId != null) {
+				if (isScanNeeded(veracodeUploadClient, appId, listener)) {
+					FilePath[] filesToScan = workspace.list(includes);
+					listener.getLogger().println("Uploading Files to Veracode: " + Arrays.toString(filesToScan));
+					listener.getLogger().println("Veracode User: " + getDescriptor().getVeracodeUser());
 
 					List<File> filesToUpload = convertFilePaths(filesToScan);
 					for (File file : filesToUpload) {
@@ -159,15 +157,14 @@ public class VeracodeNotifier extends Notifier {
 						executeScan(veracodeUploadClient, appId, listener, prescanResult);
 					}
 
-					updateScanFrequencyFile(workspace);
 					listener.getLogger().println("Veracode Scan Succeeded.  Email will be sent once results are ready.");
-
 				} else {
-					throw new VeracodeScannerException("Failed to get application id for app " + applicationName);
+					listener.getLogger().println("Veracode scan is not needed at this time.");
 				}
 			} else {
-				listener.getLogger().println("Veracode scan is not needed at this time.");
+				throw new VeracodeScannerException("Failed to get application id for app " + applicationName);
 			}
+
 		} catch (IOException e) {
 			throw new VeracodeScannerException("Veracode scan failed.", e);
 		} catch (InterruptedException ie) {
@@ -176,54 +173,39 @@ public class VeracodeNotifier extends Notifier {
 
 	}
 
-	private void updateScanFrequencyFile(FilePath workspace) throws VeracodeScannerException {
-		FilePath scannerFreqFile;
-		try {
-			scannerFreqFile = getScanFrequencyFile(workspace);
-
-			if (scannerFreqFile == null) {
-				// create the file that will be used to determine if a scan is needed
-				scannerFreqFile = new FilePath(workspace, veracodeScannerFile);
-			}
-			scannerFreqFile.touch(System.currentTimeMillis());
-		} catch (IOException e) {
-			throw new VeracodeScannerException("Updating timestamp of scanning frequency failed.", e);
-		} catch (InterruptedException e) {
-			throw new VeracodeScannerException("Job was interrupted while updating timestamp of scanning frequency.", e);
-		}
-	}
-
-	private boolean isScanNeeded(FilePath workspace) throws VeracodeScannerException {
+	private boolean isScanNeeded(UploadAPIWrapper veracodeUploadClient, String appId, BuildListener listener) throws VeracodeScannerException {
 		boolean scanNeeded = false;
 		try {
-			FilePath scannerFile = getScanFrequencyFile(workspace);
-			if (scannerFile == null) {
-				// file has not been created yet
-				scanNeeded = true;
-			} else {
-				long lastScan = scannerFile.lastModified();
-				long timeSinceLastScan = System.currentTimeMillis() - lastScan;
-				long scanFrequencyInMillis = scanFrequency * 24 * 60 * 60 * 1000;
-				if (timeSinceLastScan > scanFrequencyInMillis) {
-					scanNeeded = true;
-				}
-			}
+			JAXBContext jaxbContext = JAXBContext.newInstance(Buildinfo.class);
+			Unmarshaller jaxbUnmarshaller = jaxbContext.createUnmarshaller();
 
+			Buildinfo buildInfo = (Buildinfo) jaxbUnmarshaller.unmarshal(new StringReader(veracodeUploadClient.getBuildInfo(appId)));
+
+			if (buildInfo.getBuild().isResultsReady()) {
+				// There could be multiple analysis units per build, but we'll just grab the first one and use it
+				if (buildInfo.getBuild().getAnalysisUnit().isEmpty()) {
+					// default to true if the last build didn't include any analysis units
+					listener.getLogger().println("No analysis units are present in the last build, so another scan is going to be initiated.");
+					scanNeeded = true;
+				} else {
+					AnalysisUnitType analysisUnit = buildInfo.getBuild().getAnalysisUnit().get(0);
+					long lastScan = analysisUnit.getPublishedDate().toGregorianCalendar().getTimeInMillis();
+					long timeSinceLastScan = System.currentTimeMillis() - lastScan;
+					long scanFrequencyInMillis = scanFrequency * 24 * 60 * 60 * 1000;
+					if (timeSinceLastScan > scanFrequencyInMillis) {
+						scanNeeded = true;
+					}
+				}
+			} else {
+				listener.getLogger().println("Last scan is still in progress, so do not initiate a new scan.");
+			}
 		} catch (IOException e) {
 			throw new VeracodeScannerException("Unable to read scanning frequency file.", e);
-		} catch (InterruptedException e) {
-			throw new VeracodeScannerException("Job interrupted while reading scanning frequency file.", e);
+		} catch (JAXBException e) {
+			listener.getLogger().println("Failed to get build info to determine if scan is needed.  We'll assume one is needed.");
+			scanNeeded = true;
 		}
 		return scanNeeded;
-	}
-
-	private FilePath getScanFrequencyFile(FilePath workspace) throws IOException, InterruptedException {
-		FilePath scanFreqFile = null;
-		FilePath[] scannerFileArray = workspace.list(veracodeScannerFile);
-		if (scannerFileArray.length != 0) {
-			scanFreqFile = scannerFileArray[0];
-		}
-		return scanFreqFile;
 	}
 
 	private String getAppId(UploadAPIWrapper veracodeUploadClient, String applicationName, BuildListener listener) throws VeracodeScannerException {

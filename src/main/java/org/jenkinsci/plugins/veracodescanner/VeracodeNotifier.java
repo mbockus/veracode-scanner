@@ -191,7 +191,7 @@ public class VeracodeNotifier extends Notifier {
 					AnalysisUnitType analysisUnit = buildInfo.getBuild().getAnalysisUnit().get(0);
 					long lastScan = analysisUnit.getPublishedDate().toGregorianCalendar().getTimeInMillis();
 					long timeSinceLastScan = System.currentTimeMillis() - lastScan;
-					long scanFrequencyInMillis = scanFrequency * 24 * 60 * 60 * 1000;
+					long scanFrequencyInMillis = Long.valueOf(scanFrequency) * 24l * 60l * 60l * 1000l;
 					if (timeSinceLastScan > scanFrequencyInMillis) {
 						scanNeeded = true;
 					}

@@ -23,6 +23,7 @@ import hudson.tasks.BuildStepMonitor;
 import hudson.tasks.Notifier;
 import hudson.tasks.Publisher;
 import hudson.util.FormValidation;
+import hudson.EnvVars;
 
 import java.io.File;
 import java.io.IOException;
@@ -59,14 +60,18 @@ public class VeracodeNotifier extends Notifier {
 	private final String applicationName;
 	private final int scanFrequency;
 	private final int prescanTimeout;
+	private final String platformName;
+	private final String scanName;
 	private final BuildTriggers triggers;
 
 	@DataBoundConstructor
-	public VeracodeNotifier(String includes, String applicationName, int scanFrequency, int prescanTimeout, BuildTriggers triggers) {
+	public VeracodeNotifier(String includes, String applicationName, int scanFrequency, int prescanTimeout, String platformName, String scanName, BuildTriggers triggers) {
 		this.includes = includes;
 		this.applicationName = applicationName;
 		this.scanFrequency = scanFrequency;
 		this.prescanTimeout = prescanTimeout;
+		this.platformName = platformName;
+		this.scanName = scanName;
 
 		this.triggers = triggers;
 	}
@@ -121,6 +126,14 @@ public class VeracodeNotifier extends Notifier {
 		return Integer.toString(prescanTimeout);
 	}
 
+	public String getPlatformName() {
+		return platformName;
+	}
+
+	public String getScanName() {
+		return scanName;
+	}
+
 	public boolean isOverrideTriggers() {
 		if (triggers != null) {
 			return triggers.isTriggerManually() || triggers.isTriggerPeriodically() || triggers.isTriggerScm();
@@ -136,6 +149,7 @@ public class VeracodeNotifier extends Notifier {
 	private void performScan(AbstractBuild<?, ?> build, BuildListener listener) throws VeracodeScannerException {
 		try {
 			FilePath workspace = build.getWorkspace();
+			EnvVars envVars = build.getEnvironment(listener);
 
 			UploadAPIWrapper veracodeUploadClient = new UploadAPIWrapper();
 			veracodeUploadClient.setUpCredentials(getDescriptor().getVeracodeUser(), getDescriptor().getVeracodePass());
@@ -143,6 +157,12 @@ public class VeracodeNotifier extends Notifier {
 			String appId = getAppId(veracodeUploadClient, applicationName, listener);
 			if (appId != null) {
 				if (isScanNeeded(veracodeUploadClient, appId, listener)) {
+					if (scanName.length()>0) {
+						String customScanName = envVars.expand(scanName);
+						listener.getLogger().println("Creating Veracode scan: " + customScanName);
+						veracodeUploadClient.createBuild(appId, customScanName);
+					}
+
 					FilePath[] filesToScan = workspace.list(includes);
 					listener.getLogger().println("Uploading Files to Veracode: " + Arrays.toString(filesToScan));
 					listener.getLogger().println("Veracode User: " + getDescriptor().getVeracodeUser());
@@ -243,7 +263,9 @@ public class VeracodeNotifier extends Notifier {
 			int attemptsLeft = prescanTimeout;
 			while (attemptsLeft > 0) {
 				String preScanResultsXml = veracodeUploadClient.getPreScanResults(appId);
-				listener.getLogger().println(preScanResultsXml);
+				if (getDescriptor().getVerbose()) {
+					listener.getLogger().println(preScanResultsXml);
+				}
 				listener.getLogger().println("Attempts Left: " + attemptsLeft);
 				try {
 					results = (Prescanresults) jaxbUnmarshaller.unmarshal(new StringReader(preScanResultsXml));
@@ -273,14 +295,38 @@ public class VeracodeNotifier extends Notifier {
 			throws VeracodeScannerException {
 		listener.getLogger().println("Starting execution of scan.");
 		try {
+			String moduleId = null;
+			String platform = null;
+			String scanAllModules = "true";
+
 			for (ModuleType module : resultsOfPrescan.getModule()) {
+				if (platformName.length()>0) {
+					platform = module.getPlatform();
+
+					if (platform.contains(platformName)) {
+						moduleId = module.getId().toString();
+
+						if (moduleId.length()>0) {
+							scanAllModules = "false";
+							break;
+						}
+					}
+				}
+
 				if (module.isHasFatalErrors()) {
 					throw new VeracodeScannerException("Prescan failed for some modules.  Check prescan results.");
 				}
 			}
 
-			String buildInfoXml = veracodeUploadClient.beginScan(appId, null, "true");
-			listener.getLogger().println(buildInfoXml);
+			if (moduleId != null) {
+				listener.getLogger().println("Selected module id: " + moduleId + " (" + platform + ")");
+			}
+
+			String buildInfoXml = veracodeUploadClient.beginScan(appId, moduleId, scanAllModules);
+
+			if (getDescriptor().getVerbose()) {
+				listener.getLogger().println(buildInfoXml);
+			}
 		} catch (Exception e) {
 			throw new VeracodeScannerException(e);
 		}
@@ -322,6 +368,7 @@ public class VeracodeNotifier extends Notifier {
 		private String veracodeUser;
 		private String veracodePass;
 		private String defaultScanFrequency;
+		private Boolean verbose;
 		private String defaultPrescanTimeout;
 
 		public DescriptorImpl() {
@@ -348,6 +395,7 @@ public class VeracodeNotifier extends Notifier {
 			veracodePass = o.getString("veracode_pass");
 			defaultPrescanTimeout = o.getString("defaultPrescanTimeout");
 			defaultScanFrequency = o.getString("defaultScanFrequency");
+			verbose = o.getBoolean("verbose");
 			save();
 			return super.configure(req, o);
 		}
@@ -374,6 +422,14 @@ public class VeracodeNotifier extends Notifier {
 
 		public void setDefaultPrescanTimeout(String defaultPrescanTimeout) {
 			this.defaultPrescanTimeout = defaultPrescanTimeout;
+		}
+
+		public Boolean getVerbose() {
+			return verbose;
+		}
+
+		public void setVerbose(Boolean verbose) {
+			this.verbose = verbose;
 		}
 
 		public FormValidation doCheckScanFrequency(@QueryParameter String scanFrequency) {

@@ -5,7 +5,13 @@
     <f:entry title="Veracode Application Name" field="applicationName" help="/plugin/veracode-scanner/help/applicationname.html">
         <f:textbox/>
     </f:entry>
+    <f:entry title="Scan Name" field="scanName" help="/plugin/veracode-scanner/help/scanname.html">
+            <f:textbox/>
+    </f:entry>
     <f:advanced>
+        <f:entry title="Platform name (e.g. PHP)" field="platformName" help="/plugin/veracode-scanner/help/platformname.html">
+            <f:textbox/>
+    </f:entry>
     	<f:entry title="Scan Frequency (days)" field="scanFrequency" help="/plugin/veracode-scanner/help/scanfrequency.html">
         	<f:textbox default="${descriptor.defaultScanFrequency}"/>
     	</f:entry>

@@ -28,5 +28,10 @@
       description="The default number of minutes to wait for a prescan to finish. Specify the timeout in minutes.">
         <f:textbox field="defaultPrescanTimeout" default="30"/>
     </f:entry>
+    <f:entry title="Verbose Mode"
+      description="Provides additional details during a job">
+        <f:checkbox name="verbose" checked="${descriptor.verbose}"/>
+        If checked Veracode API response will be added to the output
+    </f:entry>
   </f:section>
 </j:jelly>

@@ -17,6 +17,7 @@ import hudson.model.BuildListener;
 import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
 import hudson.model.Cause;
+import hudson.model.Result;
 import hudson.remoting.VirtualChannel;
 import hudson.tasks.BuildStepDescriptor;
 import hudson.tasks.BuildStepMonitor;
@@ -33,6 +34,7 @@ import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 import javax.xml.bind.JAXBContext;
 import javax.xml.bind.JAXBException;
@@ -106,6 +108,10 @@ public class VeracodeNotifier extends Notifier {
 			PrintWriter pw = new PrintWriter(sw);
 			e.printStackTrace(pw);
 			listener.getLogger().println(sw.toString());
+
+			if (this.getDescriptor().getFails()) {
+				return false;
+			}
 		}
 		return true;
 	}
@@ -146,7 +152,7 @@ public class VeracodeNotifier extends Notifier {
 		return triggers;
 	}
 
-	private void performScan(AbstractBuild<?, ?> build, BuildListener listener) throws VeracodeScannerException {
+	private void performScan(AbstractBuild<?, ?> build, BuildListener listener) throws IOException, InterruptedException, VeracodeScannerException {
 		try {
 			FilePath workspace = build.getWorkspace();
 			EnvVars envVars = build.getEnvironment(listener);
@@ -154,13 +160,38 @@ public class VeracodeNotifier extends Notifier {
 			UploadAPIWrapper veracodeUploadClient = new UploadAPIWrapper();
 			veracodeUploadClient.setUpCredentials(getDescriptor().getVeracodeUser(), getDescriptor().getVeracodePass());
 
-			String appId = getAppId(veracodeUploadClient, applicationName, listener);
+			String appName = envVars.expand(applicationName);
+			String appId = getAppId(veracodeUploadClient, appName, listener);
+
 			if (appId != null) {
 				if (isScanNeeded(veracodeUploadClient, appId, listener)) {
 					if (scanName.length()>0) {
 						String customScanName = envVars.expand(scanName);
 						listener.getLogger().println("Creating Veracode scan: " + customScanName);
 						veracodeUploadClient.createBuild(appId, customScanName);
+					}
+
+					if (workspace.isRemote()) {
+						if (this.getDescriptor().getVerbose()) {
+							listener.getLogger().println("Remote workspace detected.");
+						}
+
+						if (this.getDescriptor().getRemote()) {
+							FilePath localWorkspace = new FilePath(build.getParent().getRootDir());
+
+							if (this.getDescriptor().getVerbose()) {
+								listener.getLogger().println("Preparing workspace for file upload");
+							}
+
+							workspace = prepareLocalWorkspace(localWorkspace.withSuffix("/workspace-remote"), workspace);
+
+							if (this.getDescriptor().getVerbose()) {
+								listener.getLogger().println("Files copied into " + workspace.getRemote());
+							}
+
+						} else {
+							listener.getLogger().println("[WARNING] Remote workspace detected. Please consider enabling Master/slave mode in the plugin settings");
+						}
 					}
 
 					FilePath[] filesToScan = workspace.list(includes);
@@ -182,7 +213,7 @@ public class VeracodeNotifier extends Notifier {
 					listener.getLogger().println("Veracode scan is not needed at this time.");
 				}
 			} else {
-				throw new VeracodeScannerException("Failed to get application id for app " + applicationName);
+				throw new VeracodeScannerException("Failed to get application id for app " + appName);
 			}
 
 		} catch (IOException e) {
@@ -191,6 +222,23 @@ public class VeracodeNotifier extends Notifier {
 			throw new VeracodeScannerException("Reading files to scan failed.", ie);
 		}
 
+	}
+
+	private FilePath prepareLocalWorkspace(FilePath localWorkspace, FilePath remoteWorkspace) throws VeracodeScannerException, InterruptedException {
+		try {
+
+			if (localWorkspace.exists()) {
+				localWorkspace.deleteContents();
+			} else {
+				localWorkspace.mkdirs();
+			}
+
+			remoteWorkspace.copyRecursiveTo(includes, localWorkspace);
+
+			return localWorkspace;
+		} catch (IOException e) {
+			throw new VeracodeScannerException("Could not prepare local workspace", e);
+		}
 	}
 
 	private boolean isScanNeeded(UploadAPIWrapper veracodeUploadClient, String appId, BuildListener listener) throws VeracodeScannerException {
@@ -369,6 +417,8 @@ public class VeracodeNotifier extends Notifier {
 		private String veracodePass;
 		private String defaultScanFrequency;
 		private Boolean verbose;
+		private Boolean remote;
+		private Boolean fails;
 		private String defaultPrescanTimeout;
 
 		public DescriptorImpl() {
@@ -396,6 +446,8 @@ public class VeracodeNotifier extends Notifier {
 			defaultPrescanTimeout = o.getString("defaultPrescanTimeout");
 			defaultScanFrequency = o.getString("defaultScanFrequency");
 			verbose = o.getBoolean("verbose");
+			remote = o.getBoolean("remote");
+			fails = o.getBoolean("fails");
 			save();
 			return super.configure(req, o);
 		}
@@ -430,6 +482,22 @@ public class VeracodeNotifier extends Notifier {
 
 		public void setVerbose(Boolean verbose) {
 			this.verbose = verbose;
+		}
+
+		public Boolean getRemote() {
+			return remote;
+		}
+
+		public void setRemote(Boolean remote) {
+			this.remote = remote;
+		}
+
+		public Boolean getFails() {
+			return fails;
+		}
+
+		public void setFails(Boolean fails) {
+			this.fails = fails;
 		}
 
 		public FormValidation doCheckScanFrequency(@QueryParameter String scanFrequency) {

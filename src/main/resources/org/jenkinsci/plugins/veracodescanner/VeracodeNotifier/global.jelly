@@ -33,5 +33,13 @@
         <f:checkbox name="verbose" checked="${descriptor.verbose}"/>
         If checked Veracode API response will be added to the output
     </f:entry>
+    <f:entry title="Master/slave mode"
+             description="Enable copying of remote files to the master">
+        <f:checkbox name="remote" checked="${descriptor.remote}"/>
+    </f:entry>
+    <f:entry title="Alter build status if possible"
+             description="Build status will be changed depending on Veracode scan upload status">
+        <f:checkbox name="fails" checked="${descriptor.fails}"/>
+    </f:entry>
   </f:section>
 </j:jelly>

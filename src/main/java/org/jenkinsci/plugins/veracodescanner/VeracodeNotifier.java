@@ -10,21 +10,21 @@
 
 package org.jenkinsci.plugins.veracodescanner;
 
+import hudson.EnvVars;
 import hudson.Extension;
 import hudson.FilePath;
 import hudson.Launcher;
-import hudson.model.BuildListener;
+import hudson.ProxyConfiguration;
 import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
+import hudson.model.BuildListener;
 import hudson.model.Cause;
-import hudson.model.Result;
 import hudson.remoting.VirtualChannel;
 import hudson.tasks.BuildStepDescriptor;
 import hudson.tasks.BuildStepMonitor;
 import hudson.tasks.Notifier;
 import hudson.tasks.Publisher;
 import hudson.util.FormValidation;
-import hudson.EnvVars;
 
 import java.io.File;
 import java.io.IOException;
@@ -34,14 +34,12 @@ import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
-
 import javax.xml.bind.JAXBContext;
 import javax.xml.bind.JAXBException;
 import javax.xml.bind.Unmarshaller;
 
+import jenkins.model.Jenkins;
 import net.sf.json.JSONObject;
-
 import org.jenkinsci.plugins.veracodescanner.exception.VeracodeScannerException;
 import org.jenkinsci.plugins.veracodescanner.model.AppType;
 import org.jenkinsci.plugins.veracodescanner.model.Applist;
@@ -54,6 +52,7 @@ import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest;
 
+import com.veracode.apiwrapper.AbstractAPIWrapper;
 import com.veracode.apiwrapper.wrappers.UploadAPIWrapper;
 
 public class VeracodeNotifier extends Notifier {
@@ -158,6 +157,7 @@ public class VeracodeNotifier extends Notifier {
 			EnvVars envVars = build.getEnvironment(listener);
 
 			UploadAPIWrapper veracodeUploadClient = new UploadAPIWrapper();
+			setupProxy(veracodeUploadClient, listener);
 			veracodeUploadClient.setUpCredentials(getDescriptor().getVeracodeUser(), getDescriptor().getVeracodePass());
 
 			String appName = envVars.expand(applicationName);
@@ -540,6 +540,22 @@ public class VeracodeNotifier extends Notifier {
 	private static class FileGetter implements FilePath.FileCallable<File> {
 		public File invoke(File f, VirtualChannel channel) {
 			return f;
+		}
+	}
+
+	private void setupProxy(AbstractAPIWrapper apiWrapper, BuildListener listener) {
+		ProxyConfiguration proxyConfig = Jenkins.getInstance().proxy;
+		if (proxyConfig != null) {
+			String proxyHost = proxyConfig.name;
+			String proxyPort = String.valueOf(proxyConfig.port);
+			listener.getLogger().println(String.format("using proxy - %s:%s for connection to Veracode",proxyHost,proxyPort));
+			String proxyUser = proxyConfig.getUserName();
+			if (proxyUser != null) {
+				String proxyPass = proxyConfig.getPassword();
+				apiWrapper.setUpProxy(proxyHost, proxyPort, proxyUser, proxyPass);
+			}else{
+				apiWrapper.setUpProxy(proxyHost, proxyPort);
+			}
 		}
 	}
 }
